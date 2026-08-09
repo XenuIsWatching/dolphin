@@ -18,11 +18,12 @@ struct WiimoteUpdateFlags
     bool swingAngle    = false;
     bool sideways      = false;
     bool rumble        = false;
+    bool irPassthrough = false;
 
     bool any() const {
         return irMode || irOffset || irYaw || irPitch ||
                irDeadzone || irModifier || swingModifier ||
-               swingAngle || sideways || rumble;
+               swingAngle || sideways || rumble || irPassthrough;
     }
 };
 

@@ -268,6 +268,10 @@ namespace wiimote {
 
   // preserve settings
   constexpr const char SAVE_LOAD_SETTINGS[] = "dolphin_save_load_settings";
+
+  // Raw IR: the frontend supplies the camera's view of the sensor bar directly,
+  // instead of the core synthesising it from a cursor position.
+  constexpr const char IR_PASSTHROUGH[] = "dolphin_ir_passthrough";
 }  // namespace wiimote
 }  // namespace Options
 }  // namespace Libretro
