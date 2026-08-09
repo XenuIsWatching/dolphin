@@ -38,6 +38,7 @@
 #include "InputCommon/ControlReference/ExpressionParser.h"
 #include "InputCommon/ControllerEmu/Control/Control.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Attachments.h"
+#include "InputCommon/ControllerEmu/ControlGroup/IRPassthrough.h"
 #include "InputCommon/ControllerEmu/Setting/NumericSetting.h"
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 #include "InputCommon/GCAdapter.h"
@@ -407,11 +408,26 @@ Device::Device(unsigned device, unsigned p) : m_device(device), m_port(p)
     AddButton(RETRO_DEVICE_ID_MOUSE_BUTTON_5, "Button5");
     return;
   case RETRO_DEVICE_POINTER:
-    AddButton(RETRO_DEVICE_ID_POINTER_PRESSED, "Pressed0", 0);
-    AddAxis(RETRO_DEVICE_ID_POINTER_X, -0x8000, "X0-", 0);
-    AddAxis(RETRO_DEVICE_ID_POINTER_X, 0x7FFF, "X0+", 0);
-    AddAxis(RETRO_DEVICE_ID_POINTER_Y, -0x8000, "Y0-", 0);
-    AddAxis(RETRO_DEVICE_ID_POINTER_Y, 0x7FFF, "Y0+", 0);
+    // All four touch indices, not just the first. libretro's pointer is already
+    // multi-touch, and IR passthrough needs four independent points — one per
+    // object the Wiimote's camera can see — so the indices carry them rather
+    // than inventing a device type for it. Index 0 keeps the names it had, so
+    // every existing binding (the IR cursor in mouse mode) is untouched.
+    {
+      static const char* const kPressed[] = { "Pressed0", "Pressed1", "Pressed2", "Pressed3" };
+      static const char* const kXNeg[]    = { "X0-", "X1-", "X2-", "X3-" };
+      static const char* const kXPos[]    = { "X0+", "X1+", "X2+", "X3+" };
+      static const char* const kYNeg[]    = { "Y0-", "Y1-", "Y2-", "Y3-" };
+      static const char* const kYPos[]    = { "Y0+", "Y1+", "Y2+", "Y3+" };
+      for (unsigned i = 0; i < 4; ++i)
+      {
+        AddButton(RETRO_DEVICE_ID_POINTER_PRESSED, kPressed[i], i);
+        AddAxis(RETRO_DEVICE_ID_POINTER_X, -0x8000, kXNeg[i], i);
+        AddAxis(RETRO_DEVICE_ID_POINTER_X, 0x7FFF, kXPos[i], i);
+        AddAxis(RETRO_DEVICE_ID_POINTER_Y, -0x8000, kYNeg[i], i);
+        AddAxis(RETRO_DEVICE_ID_POINTER_Y, 0x7FFF, kYPos[i], i);
+      }
+    }
     return;
   case RETRO_DEVICE_KEYBOARD:
     return;
@@ -943,6 +959,53 @@ void UpdateWiimoteMappings(const WiimoteUpdateFlags& f, unsigned port, unsigned 
       const int irDeadzone = Libretro::Options::GetCached<int>(Libretro::Options::wiimote::IR_DEADZONE);
       static_cast<ControllerEmu::NumericSetting<double>*>(wmIR->numeric_settings[0].get())
         ->SetValue(irDeadzone); // IR DeadZone
+    }
+  }
+
+  // Raw IR. When this is on, the frontend hands us the camera's actual view of
+  // the sensor bar and BuildDesiredWiimoteState uses it verbatim — the Point
+  // group, Total Yaw/Pitch, the vertical offset and the sensor-bar position are
+  // all bypassed (WiimoteEmu.cpp, "if m_ir_passthrough->enabled").
+  //
+  // That is the whole point. The cursor path parks a notional remote two metres
+  // from the bar and rotates it by a scale nobody can derive, so where the game
+  // draws its hand depends on a constant fitted per game. A frontend that knows
+  // the real geometry can compute the dots outright, and gets roll and distance
+  // for free — neither of which two angles can express.
+  //
+  // Objects arrive on pointer indices 0-3: X and Y over the camera's 0..1 field
+  // (so the frontend sends the POSITIVE half of the pointer range, 0..32767),
+  // and PRESSED says the object is visible. Size is a small constant rather than
+  // a channel of its own — nothing here has a fifth axis to spare, and games
+  // read it to reject noise rather than to measure anything.
+  if (f.irPassthrough)
+  {
+    auto* wmIRPass = static_cast<ControllerEmu::IRPassthrough*>(
+      wm->GetWiimoteGroup(WiimoteEmu::WiimoteGroup::IRPassthrough));
+    const bool passthrough =
+      Libretro::Options::GetCached<bool>(Libretro::Options::wiimote::IR_PASSTHROUGH);
+
+    if (wmIRPass)
+    {
+      // Its own copy: the one above is scoped to the cursor-mode branch, which
+      // this path deliberately does not run through.
+      const std::string devPointer =
+        Libretro::Input::GetQualifiedName(port, RETRO_DEVICE_POINTER);
+      wmIRPass->enabled.SetValue(passthrough);
+      static const char* const kObj[] = { "0", "1", "2", "3" };
+      for (int i = 0; i < 4; ++i)
+      {
+        // Cleared rather than left bound when off: AreInputsBound() is half of
+        // what selects this path, so a stale binding would keep the cursor route
+        // switched off after the option was turned back off.
+        const std::string idx = kObj[i];
+        wmIRPass->SetControlExpression(i * 3 + 0,
+          passthrough ? "`" + devPointer + ":X" + idx + "+`" : "");
+        wmIRPass->SetControlExpression(i * 3 + 1,
+          passthrough ? "`" + devPointer + ":Y" + idx + "+`" : "");
+        wmIRPass->SetControlExpression(i * 3 + 2,
+          passthrough ? "`" + devPointer + ":Pressed" + idx + "` * 0.2" : "");
+      }
     }
   }
 
@@ -1516,6 +1579,11 @@ void retro_set_controller_port_device_wii(unsigned port, unsigned device)
     f.irModifier = true;
     f.swingModifier = true;
     f.sideways = true;
+    // Raised at setup so the option takes effect on a cold boot. Without it the
+    // binding would only ever happen if the value CHANGED while running, which
+    // is the trap the IR offset/yaw/pitch settings already sit in — their
+    // declared defaults never reach the emulated remote at all.
+    f.irPassthrough = true;
     Libretro::Input::UpdateWiimoteMappings(f, port, device);
 
     wmShake->SetControlExpression(0, bindMouse("L2", devMouse + ":Middle"));  // Wiimote shake X

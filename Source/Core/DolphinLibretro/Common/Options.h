@@ -302,6 +302,10 @@ namespace wiimote {
   constexpr const char IR_MODIFIER[] = "dolphin_ir_modifier";
   constexpr const char SWING_MODIFIER[] = "dolphin_swing_modifier";
   constexpr const char SWING_ANGLE[] = "dolphin_swing_angle";
+
+  // Raw IR: the frontend supplies the camera's view of the sensor bar directly,
+  // instead of the core synthesising it from a cursor position.
+  constexpr const char IR_PASSTHROUGH[] = "dolphin_ir_passthrough";
 }  // namespace wiimote
 
 // ======================================================
