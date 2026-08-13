@@ -361,12 +361,30 @@ static VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice device,
                                                             uint64_t timeout, VkSemaphore semaphore,
                                                             VkFence fence, uint32_t* pImageIndex)
 {
+  // wait_sync_index() is a CPU-side guarantee that the frontend has finished using the image.
+  // Turn that guarantee into the semaphore/fence signal promised by vkAcquireNextImageKHR so
+  // Dolphin can keep its normal acquire wait in the render submission.
   vulkan->wait_sync_index(vulkan->handle);
   *pImageIndex = vulkan->get_sync_index(vulkan->handle);
-#if 0
-  vulkan->set_signal_semaphore(vulkan->handle, semaphore);
-#endif
-  return VK_SUCCESS;
+
+  if (semaphore == VK_NULL_HANDLE && fence == VK_NULL_HANDLE)
+    return VK_SUCCESS;
+
+  // set_signal_semaphore() cannot be used for the acquire semaphore: the frontend signals that
+  // callback only after the next video_refresh, while Dolphin must wait on the acquire semaphore
+  // before it can render that frame. An empty submission signals it immediately after the
+  // completed frontend work without creating that circular dependency.
+  VkSubmitInfo submit_info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+  if (semaphore != VK_NULL_HANDLE)
+  {
+    submit_info.signalSemaphoreCount = 1;
+    submit_info.pSignalSemaphores = &semaphore;
+  }
+
+  vulkan->lock_queue(vulkan->handle);
+  const VkResult res = vkQueueSubmit_org(vulkan->queue, 1, &submit_info, fence);
+  vulkan->unlock_queue(vulkan->handle);
+  return res;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue,
@@ -380,14 +398,11 @@ static VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue,
 #endif
 
   chain.current_index = pPresentInfo->pImageIndices[0];
-#if 0
+  // The frontend must not read the image until Dolphin's render submission has signaled the
+  // semaphores supplied to present.
   vulkan->set_image(vulkan->handle, &swapchain->images[pPresentInfo->pImageIndices[0]].retro_image,
                     pPresentInfo->waitSemaphoreCount, pPresentInfo->pWaitSemaphores,
                     vulkan->queue_index);
-#else
-  vulkan->set_image(vulkan->handle, &swapchain->images[pPresentInfo->pImageIndices[0]].retro_image,
-                    0, nullptr, vulkan->queue_index);
-#endif
   swapchain->condVar.notify_all();
   uint32_t out_w = 0;
   uint32_t out_h = 0;
@@ -456,26 +471,11 @@ static VKAPI_ATTR void VKAPI_CALL vkDestroySwapchainKHR(VkDevice device, VkSwapc
 static VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue queue, uint32_t submitCount,
                                                     const VkSubmitInfo* pSubmits, VkFence fence)
 {
-  VkResult res = VK_SUCCESS;
-
-#if 0
-	for(int i = 0; i < submitCount; i++)
-		vulkan->set_command_buffers(vulkan->handle, pSubmits[i].commandBufferCount, pSubmits[i].pCommandBuffers);
-#else
-#if 1
-  for (uint32_t i = 0; i < submitCount; i++)
-  {
-    ((VkSubmitInfo*)pSubmits)[i].waitSemaphoreCount = 0;
-    ((VkSubmitInfo*)pSubmits)[i].pWaitSemaphores = nullptr;
-    ((VkSubmitInfo*)pSubmits)[i].signalSemaphoreCount = 0;
-    ((VkSubmitInfo*)pSubmits)[i].pSignalSemaphores = nullptr;
-  }
-#endif
+  // Preserve Dolphin's acquire wait and render-finished signal. The fake acquire above now
+  // signals the former, and fake present forwards the latter to the frontend through set_image.
   vulkan->lock_queue(vulkan->handle);
-  res = vkQueueSubmit_org(queue, submitCount, pSubmits, fence);
+  const VkResult res = vkQueueSubmit_org(queue, submitCount, pSubmits, fence);
   vulkan->unlock_queue(vulkan->handle);
-#endif
-
   return res;
 }
 
