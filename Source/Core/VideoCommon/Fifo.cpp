@@ -299,7 +299,17 @@ void FifoManager::RunGpuLoop()
 
         // Do nothing while paused
         if (!m_emu_running_state.IsSet())
+        {
+#ifdef __LIBRETRO__
+          // retro_run owns this thread, and the loop only ends when Callback_NewField
+          // stops it from the CPU thread at a field boundary — which can never arrive
+          // while the core is paused. Staying here deadlocks: retro_run never returns,
+          // so the DoFrameStep that would resume the core never runs again. Leave, and
+          // let the next retro_run advance it.
+          m_gpu_mainloop.Stop(Common::BlockingLoop::StopMode::NonBlock);
+#endif
           return;
+        }
 
         if (m_use_deterministic_gpu_thread)
         {
