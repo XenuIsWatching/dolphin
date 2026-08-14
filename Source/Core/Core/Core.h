@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
@@ -200,7 +201,7 @@ void UpdateTitle(Core::System& system);
   void SingleCorePostRunShutdown();
   extern std::unique_ptr<BootParameters> g_boot_params;
   extern std::thread s_emu_thread;
-  extern bool s_frame_step;
+  extern std::atomic<bool> s_frame_step;
   extern std::atomic<bool> s_stop_frame_step;
 #endif
 

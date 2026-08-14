@@ -110,7 +110,12 @@ static bool s_is_throttler_temp_disabled = false;
 #ifndef __LIBRETRO__
 static
 #endif
-bool s_frame_step = false;
+// Atomic because the CPU thread ends a frame step in Callback_NewField while the
+// host thread starts one in DoFrameStep, which holds s_core_mutex; the CPU thread
+// does not. On x86 the plain bool survived that; on ARM64's weaker ordering the
+// missed transition leaves the CPU halted with the GPU loop idle and nothing to
+// wake either of them.
+std::atomic<bool> s_frame_step = false;
 #ifndef __LIBRETRO__
 static
 #endif
