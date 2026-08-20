@@ -1,6 +1,7 @@
 // Copyright 2009 Dolphin Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "Core/Host.h"
 #include "Core/HW/SI/SI_DeviceGBA.h"
 
 #include <cstddef>
@@ -107,8 +108,18 @@ static std::unique_ptr<sf::TcpSocket> GetNextClock()
   return MoveFromFront(s_waiting_clocks);
 }
 
-GBASockServer::GBASockServer()
+GBASockServer::GBASockServer(int device_number) : m_device_number(device_number)
 {
+  // The bus is asked for on first use, not here.
+  //
+  // A serial device is constructed while the machine is still being built, and
+  // the frontend needs this GameCube's tick rate to join a bus with -- which the
+  // system timers do not have yet at that moment. Asking too early got a rate of
+  // zero at best and took the process down at worst.
+  //
+  // The connection waiter is still started here, because it has to be listening
+  // before an mGBA dials in, and it costs one idle thread on a machine that
+  // turns out to have a bus after all.
   if (!s_connection_thread.joinable())
     s_connection_thread = std::thread(GBAConnectionWaiter);
 
@@ -139,6 +150,18 @@ void GBASockServer::Disconnect()
 
 void GBASockServer::ClockSync(Core::System& system)
 {
+  // On a bus there is no time slice to send. The socket version sends one
+  // because TCP has no shared clock and the Game Boy Advance would otherwise
+  // have no idea how far to run; a frontend running both emulators has a clock
+  // they are both on, and converts between a GameCube's tick rate and a GBA's
+  // itself. Letting the other machine catch up is all that is left, and that is
+  // what RunUpTo does, in the SI device where the wait belongs.
+  if (Transport())
+  {
+    m_last_time_slice = system.GetCoreTiming().GetTicks();
+    return;
+  }
+
   if (!m_clock_sync)
     if (!(m_clock_sync = GetNextClock()))
       return;
@@ -176,6 +199,9 @@ void GBASockServer::ClockSync(Core::System& system)
 
 bool GBASockServer::Connect()
 {
+  if (Transport())
+    return m_transport->Connected();
+
   if (!IsConnected())
   {
     m_client = GetNextSock();
@@ -187,7 +213,21 @@ bool GBASockServer::Connect()
 
 bool GBASockServer::IsConnected()
 {
+  if (Transport())
+    return m_transport->Connected();
   return static_cast<bool>(m_client);
+}
+
+// The frontend's bus, asked for once and then remembered either way. Null means
+// there is none and the sockets stand.
+GBALinkTransport* GBASockServer::Transport()
+{
+  if (!m_transport_tried)
+  {
+    m_transport_tried = true;
+    m_transport = Host_CreateGBALinkTransport(m_device_number);
+  }
+  return m_transport.get();
 }
 
 void GBASockServer::Send(const u8* si_buffer)
@@ -200,12 +240,16 @@ void GBASockServer::Send(const u8* si_buffer)
     send_data[i] = si_buffer[i];
 
   const auto cmd = static_cast<EBufferCommands>(send_data[0]);
+  // Only a write carries its four bytes; everything else is the command alone.
+  const size_t len = (cmd == EBufferCommands::CMD_WRITE_GBA) ? send_data.size() : 1;
 
-  sf::Socket::Status status;
-  if (cmd == EBufferCommands::CMD_WRITE_GBA)
-    status = m_client->send(send_data.data(), send_data.size());
-  else
-    status = m_client->send(send_data.data(), 1);
+  if (Transport())
+  {
+    m_transport->Send(send_data.data(), len, m_last_time_slice);
+    return;
+  }
+
+  sf::Socket::Status status = m_client->send(send_data.data(), len);
 
   if (status == sf::Socket::Status::Disconnected)
     Disconnect();
@@ -213,6 +257,9 @@ void GBASockServer::Send(const u8* si_buffer)
 
 int GBASockServer::Receive(u8* si_buffer, u8 bytes)
 {
+  if (Transport())
+    return m_transport->Receive(si_buffer, bytes);
+
   if (!m_client)
     return 0;
 
@@ -244,8 +291,19 @@ int GBASockServer::Receive(u8* si_buffer, u8 bytes)
   return static_cast<int>(std::min(num_received, recv_data.size()));
 }
 
+void GBASockServer::RunUpTo(u64 ticks)
+{
+  if (Transport())
+    m_transport->RunUpTo(ticks);
+}
+
 void GBASockServer::Flush()
 {
+  // Nothing to flush on a bus: it delivers what was sent, in order, and there
+  // are no replies left over from a poll that timed out.
+  if (Transport())
+    return;
+
   if (!m_client)
     return;
 
@@ -260,7 +318,7 @@ void GBASockServer::Flush()
 }
 
 CSIDevice_GBA::CSIDevice_GBA(Core::System& system, SIDevices device, int device_number)
-    : ISIDevice(system, device, device_number)
+    : ISIDevice(system, device, device_number), m_sock_server(device_number)
 {
 }
 
@@ -293,11 +351,19 @@ int CSIDevice_GBA::RunBuffer(u8* buffer, int request_length)
 
   case NextAction::WaitTransferTime:
   {
+    const int transfer_time = SIDevice_GetGBATransferTime(m_system.GetSystemTimers(), m_last_cmd);
     const int elapsed_time =
         static_cast<int>(m_system.GetCoreTiming().GetTicks() - m_timestamp_sent);
     // Tell SI to ask again after TransferInterval() cycles
-    if (SIDevice_GetGBATransferTime(m_system.GetSystemTimers(), m_last_cmd) > elapsed_time)
+    if (transfer_time > elapsed_time)
       return 0;
+
+    // On a bus the answer is not sitting in a socket waiting to be read: the
+    // Game Boy Advance has to have RUN to the point where it gave one. Waiting
+    // for it here is the whole of the clock the socket version has to fake with
+    // a time slice, and it is why this can be exact where that one is a guess.
+    m_sock_server.RunUpTo(m_timestamp_sent + static_cast<u64>(transfer_time));
+
     m_next_action = NextAction::ReceiveResponse;
     [[fallthrough]];
   }

@@ -2,6 +2,7 @@
 add_library(dolphin_libretro SHARED
   Audio.cpp
   Boot.cpp
+  GBALink.cpp
   Host.cpp
   Input.cpp
   Log.cpp

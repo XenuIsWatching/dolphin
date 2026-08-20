@@ -53,6 +53,16 @@
 #define RETRO_DEVICE_WIIMOTE_CC_PRO ((5 << 8) | RETRO_DEVICE_JOYPAD)
 #define RETRO_DEVICE_GC_ON_WII ((6 << 8) | RETRO_DEVICE_JOYPAD)
 #define RETRO_DEVICE_REAL_WIIMOTE ((6 << 8) | RETRO_DEVICE_NONE)
+// A Game Boy Advance on the end of a GameCube lead: a machine of its own, not a
+// controller, with its own screen and its own emulator running elsewhere in this
+// process. Four Swords Adventures and its like put a whole player on one.
+//
+// A DEVICE TYPE rather than a core option, because that is exactly what libretro
+// already means by "what is plugged into port N": it is per-port, it can change
+// while the machine runs, and the room sets it by seating a cable rather than by
+// opening a menu. A core option would have been a second way of saying the same
+// thing, and one that could disagree with the first.
+#define RETRO_DEVICE_GBA_LINK ((7 << 8) | RETRO_DEVICE_NONE)
 // MotionPlus is a dongle in the expansion port, not a mode of the remote, so it
 // gets device ids of its own rather than a core option: it is per-PORT hardware,
 // and one player having it fitted while another does not is the ordinary case.
@@ -631,6 +641,7 @@ void InitStage2()
           {"WiiMote + MotionPlus + Classic Controller Pro", RETRO_DEVICE_WIIMOTE_MP_CC_PRO},
           {"Real WiiMote", RETRO_DEVICE_REAL_WIIMOTE},
           {"GameCube Controller", RETRO_DEVICE_GC_ON_WII},
+          {"Game Boy Advance (link cable)", RETRO_DEVICE_GBA_LINK},
       };
 
       const struct retro_controller_info ports[] = {
@@ -1244,6 +1255,10 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
       desc = Libretro::Input::descGC;
       break;
 
+    case RETRO_DEVICE_GBA_LINK:
+      // Its buttons belong to the machine on the other end of the lead.
+      continue;
+
     default:
       if (!system.IsWii() || i > 3)
       {
@@ -1387,9 +1402,30 @@ void retro_set_controller_port_device_gc(unsigned port, unsigned device)
 
   Core::System& system = Core::System::GetInstance();
 
-  Config::SetBaseOrCurrent(Config::GetInfoForSIDevice(port > 3 ? port - 4 : port),
-    system.IsTriforce() ? SerialInterface::SIDEVICE_AM_BASEBOARD : SerialInterface::SIDEVICE_GC_CONTROLLER);
-  si.ChangeDevice(Config::Get(Config::GetInfoForSIDevice(port > 3 ? port - 4 : port)), port > 3 ? port - 4 : port);
+  const int si_port = port > 3 ? port - 4 : port;
+  SerialInterface::SIDevices si_device =
+      system.IsTriforce() ? SerialInterface::SIDEVICE_AM_BASEBOARD :
+                            SerialInterface::SIDEVICE_GC_CONTROLLER;
+  if (device == RETRO_DEVICE_GBA_LINK)
+  {
+    // SIDEVICE_GC_GBA, not SIDEVICE_GC_GBA_EMULATED. The emulated one runs a Game
+    // Boy Advance inside this process, which is the arrangement that cannot
+    // compose:
+    // it has no screen anybody can see and no way to be a machine in a room. This
+    // one reaches an emulator running BESIDE this one, which is a console a
+    // player can pick up.
+    si_device = SerialInterface::SIDEVICE_GC_GBA;
+  }
+
+  Config::SetBaseOrCurrent(Config::GetInfoForSIDevice(si_port), si_device);
+  si.ChangeDevice(Config::Get(Config::GetInfoForSIDevice(si_port)), si_port);
+
+  if (device == RETRO_DEVICE_GBA_LINK)
+  {
+    // Nothing else to set up: a GBA on the end of a lead has its own buttons on
+    // its own machine, so this port has no pad to configure.
+    return;
+  }
 
   GCPad* gcPad = (GCPad*)Pad::GetConfig()->GetController(port > 3 ? port - 4 : port);
   // load an empty inifile section, clears everything

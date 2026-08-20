@@ -13,6 +13,10 @@
 
 // GameBoy Advance "Link Cable"
 
+// Declared in Core/Host.h, at global scope with the other Host_ hooks: it is a
+// thing a FRONTEND provides, not a part of the serial interface.
+class GBALinkTransport;
+
 namespace SerialInterface
 {
 void GBAConnectionWaiter_Shutdown();
@@ -20,21 +24,32 @@ void GBAConnectionWaiter_Shutdown();
 class GBASockServer
 {
 public:
-  GBASockServer();
+  explicit GBASockServer(int device_number = 0);
   ~GBASockServer();
 
   bool Connect();
   bool IsConnected();
   void ClockSync(Core::System& system);
+  // Let a Game Boy Advance on a frontend-hosted bus run up to `ticks` of this
+  // GameCube's clock, and wait until it has. A no-op on sockets.
+  void RunUpTo(u64 ticks);
   void Send(const u8* si_buffer);
   int Receive(u8* si_buffer, u8 bytes);
   void Flush();
 
 private:
   void Disconnect();
+  GBALinkTransport* Transport();
 
   std::unique_ptr<sf::TcpSocket> m_client;
   std::unique_ptr<sf::TcpSocket> m_clock_sync;
+
+  // A bus the frontend hosts, when there is one. Where this exists the sockets
+  // are never opened at all: it is the same conversation over something that
+  // already knows what time it is on both ends.
+  std::unique_ptr<GBALinkTransport> m_transport;
+  bool m_transport_tried = false;
+  int m_device_number = 0;
 
   u64 m_last_time_slice = 0;
   bool m_booted = false;

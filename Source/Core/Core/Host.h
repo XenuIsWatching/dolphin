@@ -40,6 +40,39 @@ public:
   virtual void FrameEnded(std::span<const u32> video_buffer) = 0;
 };
 
+// A way for a GameCube's serial port to reach a Game Boy Advance that is NOT
+// inside this process's emulation -- a separate emulator the frontend is also
+// running, sharing a bus the frontend hosts.
+//
+// Dolphin has always been able to do this over a pair of TCP sockets, which is
+// what GBASockServer speaks, and a socket is a poor way to carry a link that
+// polls a thousand times a second: there is no shared clock, so one end has to
+// send the other a time slice, and the round trip costs more than the transfer
+// it carries. A frontend running both emulators can do better, because it has a
+// clock both of them are on.
+//
+// Returns nullptr in frontends that have no such bus, which is all of them
+// except libretro; those keep the sockets.
+class GBALinkTransport
+{
+public:
+  virtual ~GBALinkTransport() = default;
+
+  // Whether anything is on the other end. False makes the device behave exactly
+  // as an unplugged socket does.
+  virtual bool Connected() = 0;
+
+  // Let the Game Boy Advance run up to `ticks`, in this GameCube's units, and
+  // wait until it has. This is the shared clock: it replaces the time slice the
+  // socket version has to send because TCP has none.
+  virtual void RunUpTo(u64 ticks) = 0;
+
+  virtual void Send(const u8* data, size_t len, u64 ticks) = 0;
+  virtual int Receive(u8* data, u8 bytes) = 0;
+};
+
+std::unique_ptr<GBALinkTransport> Host_CreateGBALinkTransport(int device_number);
+
 enum class HostMessageID
 {
   // Begin at 10 in case there is already messages with wParam = 0, 1, 2 and so on
