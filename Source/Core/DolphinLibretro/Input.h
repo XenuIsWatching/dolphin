@@ -1,10 +1,18 @@
 #pragma once
 
+#include <string>
+
 #include <libretro.h>
 #include "Common/WindowSystemInfo.h"
+#include "DolphinLibretro/SensorIndex.h"
 
 // only 4 support sensors, but the array may be upto 8 if connected GC controllers
 #define NUM_CONTROLLERS_FOR_SENSORS 8
+
+// Sensors addressable on one port. Index 0 is the controller itself; index 1 is
+// whatever is plugged into it, which for a Wii Remote is the Nunchuk and its own
+// accelerometer. A player is one port, so the pair cannot be spread over two.
+#define NUM_SENSOR_SUB_DEVICES 2
 
 struct WiimoteUpdateFlags
 {
@@ -36,17 +44,25 @@ namespace Libretro
 namespace Input
 {
 constexpr std::string_view source = "Libretro";
-extern double g_accel_pos[NUM_CONTROLLERS_FOR_SENSORS][3];
-extern double g_accel_neg[NUM_CONTROLLERS_FOR_SENSORS][3];
-extern double g_gyro_pos[NUM_CONTROLLERS_FOR_SENSORS][3];
-extern double g_gyro_neg[NUM_CONTROLLERS_FOR_SENSORS][3];
+extern double g_accel_pos[NUM_CONTROLLERS_FOR_SENSORS][NUM_SENSOR_SUB_DEVICES][3];
+extern double g_accel_neg[NUM_CONTROLLERS_FOR_SENSORS][NUM_SENSOR_SUB_DEVICES][3];
+extern double g_gyro_pos[NUM_CONTROLLERS_FOR_SENSORS][NUM_SENSOR_SUB_DEVICES][3];
+extern double g_gyro_neg[NUM_CONTROLLERS_FOR_SENSORS][NUM_SENSOR_SUB_DEVICES][3];
 
 static retro_sensor_interface sensor_interface = {0};
+
+/// The ciface device name for one port's sub-device. Index 0 keeps the plain
+/// "Sensor" it has always had, so every control expression written before
+/// sub-devices existed still resolves to exactly the device it always did.
+inline std::string SensorDeviceName(unsigned index)
+{
+  return index == 0 ? std::string("Sensor") : "Sensor" + std::to_string(index);
+}
 
 void Init(const WindowSystemInfo& wsi);
 void InitStage2();
 void InitSensors();
-void UpdateAccelerometer(unsigned port);
+void UpdateAccelerometer(unsigned port, unsigned index);
 void UpdateGyro(unsigned port);
 void Update();
 void Shutdown();
@@ -60,9 +76,15 @@ void UpdateGCMappings(const WiimoteUpdateFlags& f, unsigned port, unsigned devic
 class SensorDevice : public ciface::Core::Device
 {
 public:
-  explicit SensorDevice(unsigned port) : m_port(port) {}
+  /// `index` is the sub-device on this port, matching the one the frontend is
+  /// asked for. Both are needed: the port picks the player, the index picks
+  /// which of that player's sensors this device publishes.
+  SensorDevice(unsigned port, unsigned index)
+      : m_port(port), m_index(index), m_name(Libretro::Input::SensorDeviceName(index))
+  {
+  }
 
-  std::string GetName() const override { return "Sensor"; }
+  std::string GetName() const override { return m_name; }
   std::string GetSource() const override { return std::string(Libretro::Input::source); }
   unsigned int GetPort() const { return m_port; }
   ciface::Core::DeviceRemoval UpdateInput() override { return ciface::Core::DeviceRemoval::Keep; }
@@ -89,22 +111,24 @@ public:
   /// value the sensor actually reported.
   void RegisterAll()
   {
-    AddInput(new ScalarInput("GyroX+", &Libretro::Input::g_gyro_pos[m_port][0]));
-    AddInput(new ScalarInput("GyroX-", &Libretro::Input::g_gyro_neg[m_port][0]));
-    AddInput(new ScalarInput("GyroY+", &Libretro::Input::g_gyro_pos[m_port][1]));
-    AddInput(new ScalarInput("GyroY-", &Libretro::Input::g_gyro_neg[m_port][1]));
-    AddInput(new ScalarInput("GyroZ+", &Libretro::Input::g_gyro_pos[m_port][2]));
-    AddInput(new ScalarInput("GyroZ-", &Libretro::Input::g_gyro_neg[m_port][2]));
-    AddInput(new ScalarInput("AccelX+", &Libretro::Input::g_accel_pos[m_port][0]));
-    AddInput(new ScalarInput("AccelX-", &Libretro::Input::g_accel_neg[m_port][0]));
-    AddInput(new ScalarInput("AccelY+", &Libretro::Input::g_accel_pos[m_port][1]));
-    AddInput(new ScalarInput("AccelY-", &Libretro::Input::g_accel_neg[m_port][1]));
-    AddInput(new ScalarInput("AccelZ+", &Libretro::Input::g_accel_pos[m_port][2]));
-    AddInput(new ScalarInput("AccelZ-", &Libretro::Input::g_accel_neg[m_port][2]));
+    AddInput(new ScalarInput("GyroX+", &Libretro::Input::g_gyro_pos[m_port][m_index][0]));
+    AddInput(new ScalarInput("GyroX-", &Libretro::Input::g_gyro_neg[m_port][m_index][0]));
+    AddInput(new ScalarInput("GyroY+", &Libretro::Input::g_gyro_pos[m_port][m_index][1]));
+    AddInput(new ScalarInput("GyroY-", &Libretro::Input::g_gyro_neg[m_port][m_index][1]));
+    AddInput(new ScalarInput("GyroZ+", &Libretro::Input::g_gyro_pos[m_port][m_index][2]));
+    AddInput(new ScalarInput("GyroZ-", &Libretro::Input::g_gyro_neg[m_port][m_index][2]));
+    AddInput(new ScalarInput("AccelX+", &Libretro::Input::g_accel_pos[m_port][m_index][0]));
+    AddInput(new ScalarInput("AccelX-", &Libretro::Input::g_accel_neg[m_port][m_index][0]));
+    AddInput(new ScalarInput("AccelY+", &Libretro::Input::g_accel_pos[m_port][m_index][1]));
+    AddInput(new ScalarInput("AccelY-", &Libretro::Input::g_accel_neg[m_port][m_index][1]));
+    AddInput(new ScalarInput("AccelZ+", &Libretro::Input::g_accel_pos[m_port][m_index][2]));
+    AddInput(new ScalarInput("AccelZ-", &Libretro::Input::g_accel_neg[m_port][m_index][2]));
   }
 
 private:
   unsigned m_port;
+  unsigned m_index;
+  std::string m_name;
 };
 
 class GyroDevice : public ciface::Core::Device
