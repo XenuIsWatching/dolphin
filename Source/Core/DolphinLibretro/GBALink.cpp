@@ -87,7 +87,7 @@ const retro_link_interface* GetLinkInterface()
 class Transport final : public GBALinkTransport
 {
 public:
-  Transport(const retro_link_interface* link, retro_link_handle_t handle, u64 ticks_per_second)
+  Transport(const retro_link_interface* link, retro_link_port_t *handle, u64 ticks_per_second)
       : m_link(link), m_handle(handle), m_horizon(ticks_per_second / HORIZON_DIVISOR + 1)
   {
   }
@@ -160,7 +160,7 @@ private:
   static constexpr u8 NL_JOY_REPLY = 6;
 
   const retro_link_interface* m_link;
-  retro_link_handle_t m_handle;
+  retro_link_port_t *m_handle;
   u64 m_horizon;
   u64 m_position = 0;
 };
@@ -182,7 +182,7 @@ std::unique_ptr<GBALinkTransport> Host_CreateGBALinkTransport(int device_number)
   if (!ticks_per_second)
     return nullptr;
 
-  retro_link_handle_t handle = link->attach(static_cast<unsigned>(device_number),
+  retro_link_port_t *handle = link->attach(static_cast<unsigned>(device_number),
                                             Libretro::JOYLINK_PROTOCOL, ticks_per_second);
   if (!handle)
     return nullptr;
