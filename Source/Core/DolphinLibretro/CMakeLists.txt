@@ -7,6 +7,7 @@ add_library(dolphin_libretro SHARED
   Input.cpp
   Log.cpp
   Main.cpp
+  Memcard.cpp
   Video.cpp
 )
 

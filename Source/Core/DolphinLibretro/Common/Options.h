@@ -188,6 +188,21 @@ namespace main_bluetooth {
 // System Configuration (SYSCONF) - GC
 // ======================================================
 namespace sysconf_gc {
+  // What is in each GameCube memory card slot.
+  //
+  // Two declared values, "gci" and "none", but the value is NOT limited to
+  // them: anything else is taken as an absolute path to a raw card image and
+  // used verbatim. A libretro value list is advisory -- the frontend picks what
+  // it sends -- and a path cannot be enumerated, so the option's description
+  // says so and Libretro::Memcard::Resolve validates what arrives.
+  //
+  // One key per slot carrying BOTH the device and the path, so a seat changes
+  // atomically. A separate device key and path key can arrive in either order
+  // within one frame, and "raw" with last frame's path is a card swap nobody
+  // asked for.
+  constexpr const char MEMCARD_A_PATH[] = "dolphin_memcard_a_path";
+  constexpr const char MEMCARD_B_PATH[] = "dolphin_memcard_b_path";
+
   constexpr const char SP1_DEVICE[] = "dolphin_gc_sp1";
   constexpr const char ENABLE_GAMECUBE_MIC[] = "dolphin_enable_gamecube_mic";
   constexpr const char HOTKEY_ACTIVATE_MICROPHONE[] = "dolphin_hotkey_activate_microphone";

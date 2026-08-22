@@ -37,6 +37,7 @@
 #include "Core/System.h"
 #include "DolphinLibretro/Audio.h"
 #include "DolphinLibretro/Input.h"
+#include "DolphinLibretro/Memcard.h"
 #include "DolphinLibretro/Common/Options.h"
 #include "DolphinLibretro/Video.h"
 #include "VideoBackends/OGL/OGLTexture.h"
@@ -473,6 +474,10 @@ void retro_run(void)
 
   if (Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_ENABLED))
     Libretro::Input::BluetoothPassthroughBind();
+
+  // A card seated or pulled since the last frame. Before the frame runs, so the
+  // eject reaches the game on a boundary rather than half way through one.
+  Libretro::Memcard::CheckForUpdates();
 
   RETRO_PERFORMANCE_INIT(dolphin_main_func);
   RETRO_PERFORMANCE_START(dolphin_main_func);

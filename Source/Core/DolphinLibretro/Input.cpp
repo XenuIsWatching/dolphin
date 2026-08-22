@@ -563,8 +563,28 @@ void Init(const WindowSystemInfo& wsi)
     bool gcMicEnable = Libretro::Options::GetCached<bool>(
       Libretro::Options::sysconf_gc::ENABLE_GAMECUBE_MIC);
 
+    // Slot B holds one thing. Memcard::ApplyCold has already run, so a card the
+    // frontend named is installed by now -- and it wins, because asking for a
+    // specific card file is explicit while this option merely defaults off.
+    //
+    // Ruled out loud rather than left to whoever writes last: poll_microphone
+    // reads this config value back to decide whether to poll at all, so the two
+    // silently disagreeing shows up much later as a microphone that went dead.
+    const bool slot_b_has_card =
+        Config::Get(Config::GetInfoForEXIDevice(ExpansionInterface::Slot::B)) ==
+        ExpansionInterface::EXIDeviceType::MemoryCard;
+
     if (!Core::System::GetInstance().IsWii() && gcMicEnable)
-      Config::SetCurrent(Config::MAIN_SLOT_B, ExpansionInterface::EXIDeviceType::Microphone);
+    {
+      if (slot_b_has_card)
+      {
+        WARN_LOG_FMT(BOOT, "GameCube microphone not enabled: slot B holds a memory card");
+      }
+      else
+      {
+        Config::SetCurrent(Config::MAIN_SLOT_B, ExpansionInterface::EXIDeviceType::Microphone);
+      }
+    }
   }
   else
   {

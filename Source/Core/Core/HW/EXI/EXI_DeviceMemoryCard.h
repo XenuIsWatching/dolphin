@@ -35,6 +35,27 @@ namespace ExpansionInterface
 {
 enum class Slot : int;
 
+#ifdef __LIBRETRO__
+// An exact raw-memcard path for one slot, used VERBATIM.
+//
+// Config::GetMemcardPath rewrites whatever it is given: it strips a trailing
+// region code off the basename, re-appends the DISC's region, and adds a block
+// count when the card is smaller than 2043 blocks, so a configured "MYCARD.raw"
+// becomes "MYCARD.USA.251.raw". A libretro frontend that hands us a specific
+// file means that file — one physical card holds saves from any region, as the
+// hardware does — so the override skips that rewriting.
+//
+// A table consulted at the one call site rather than a change to
+// Config::GetMemcardPath, which has three other live callers in a libretro
+// build: GCMemcardDirectory's first-use migration, and Movie and NetPlayServer,
+// which both derive the memcard-sync filename from it on BOTH ends of a
+// session. Changing what it returns globally would break all three.
+//
+// Empty clears the override and restores Config::GetMemcardPath's answer.
+void SetExactMemcardPath(Slot slot, std::string path);
+std::string GetExactMemcardPath(Slot slot);
+#endif
+
 enum class AllowMovieFolder
 {
   Yes,

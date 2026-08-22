@@ -6,6 +6,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -37,6 +38,30 @@
 
 namespace ExpansionInterface
 {
+#ifdef __LIBRETRO__
+// See the header. Written from the option-apply path and read during device
+// construction, which includes construction from retro_unserialize, so the two
+// are not reliably the same thread.
+static std::mutex s_exact_memcard_path_mutex;
+static Common::EnumMap<std::string, MAX_MEMCARD_SLOT> s_exact_memcard_path;
+
+void SetExactMemcardPath(Slot slot, std::string path)
+{
+  if (!IsMemcardSlot(slot))
+    return;
+  std::lock_guard lk(s_exact_memcard_path_mutex);
+  s_exact_memcard_path[slot] = std::move(path);
+}
+
+std::string GetExactMemcardPath(Slot slot)
+{
+  if (!IsMemcardSlot(slot))
+    return {};
+  std::lock_guard lk(s_exact_memcard_path_mutex);
+  return s_exact_memcard_path[slot];
+}
+#endif
+
 #define MC_STATUS_BUSY 0x80
 #define MC_STATUS_UNLOCKED 0x40
 #define MC_STATUS_SLEEP 0x20
@@ -227,6 +252,28 @@ void CEXIMemoryCard::SetupRawMemcard(u16 size_mb)
   }
   else
   {
+#ifdef __LIBRETRO__
+    // A frontend-supplied path is used exactly as given -- see the header for
+    // why this does not go through Config::GetMemcardPath.
+    std::string exact = GetExactMemcardPath(m_card_slot);
+    if (!exact.empty())
+    {
+      // The frontend validates the file before it seats the card, so this can
+      // only fire if it went away in between. MemoryCard would then create and
+      // format a blank one here, which reads to the player exactly like the
+      // saves being wiped -- worth a loud line, even though the decision to
+      // seat nothing at all belongs one level up.
+      if (!File::Exists(exact))
+      {
+        ERROR_LOG_FMT(EXPANSIONINTERFACE,
+                      "Memory Card {}: '{}' is gone since it was checked; a blank one is "
+                      "about to be created in its place",
+                      s_card_short_names[m_card_slot], exact);
+      }
+      filename = std::move(exact);
+    }
+    else
+#endif
     filename = Config::GetMemcardPath(m_card_slot, SConfig::GetInstance().m_region, size_mb);
   }
 

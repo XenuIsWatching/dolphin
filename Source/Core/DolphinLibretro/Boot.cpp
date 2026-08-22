@@ -28,6 +28,7 @@
 #include "DolphinLibretro/Audio.h"
 #include "DolphinLibretro/Input.h"
 #include "DolphinLibretro/Log.h"
+#include "DolphinLibretro/Memcard.h"
 #include "DolphinLibretro/Common/VFile.h"
 #include "DolphinLibretro/Common/Globals.h"
 #include "DolphinLibretro/Common/Options.h"
@@ -652,6 +653,11 @@ bool retro_load_game(const struct retro_game_info* game)
   for (auto& normalized_game_path : normalized_game_paths)
     Libretro::disk_paths.push_back(Libretro::VFile::DenormalizePath(normalized_game_path));
 
+  // BEFORE Input::Init, which claims slot B for the GameCube microphone and
+  // then reads the config back to decide whether to poll it. Seating the cards
+  // first means the microphone can see a card is already there.
+  Libretro::Memcard::ApplyCold();
+
   Libretro::Input::Init(wsi);
 
   // for Wii
@@ -776,6 +782,10 @@ void retro_unload_game(void)
   // Rest of shutdown
   g_context_status.MarkUnitialized();
   Libretro::Input::Shutdown();
+  // After Core::Shutdown, which is where the cards are actually written: the
+  // EXI teardown destroys each CEXIMemoryCard, and ~MemoryCard joins its flush
+  // thread. Every seated card is on disk by the time this function returns.
+  Libretro::Memcard::Shutdown();
   Libretro::Log::Shutdown();
   UICommon::ShutdownControllers();
   UICommon::Shutdown();
