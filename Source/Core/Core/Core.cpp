@@ -94,6 +94,8 @@
 namespace Core
 {
 static bool s_wants_determinism;
+// Requested from outside Movie and NetPlay -- see Core::SetForceDeterminism.
+static bool s_force_determinism = false;
 
 #ifdef __LIBRETRO__
 static std::vector<Common::ScopeGuard<Common::MoveOnlyFunction<void()>>> s_emu_thread_scope_guards;
@@ -232,6 +234,16 @@ bool IsGPUThread()
 bool WantsDeterminism()
 {
   return s_wants_determinism;
+}
+
+void SetForceDeterminism(bool force)
+{
+  s_force_determinism = force;
+}
+
+bool GetForceDeterminism()
+{
+  return s_force_determinism;
 }
 
 // This is called from the GUI thread. See the booting call schedule in
@@ -1070,7 +1082,8 @@ void UpdateWantDeterminism(Core::System& system, bool initial)
   // For now, this value is not itself configurable.  Instead, individual
   // settings that depend on it, such as GPU determinism mode. should have
   // override options for testing,
-  bool new_want_determinism = system.GetMovie().IsMovieActive() || NetPlay::IsNetPlayRunning();
+  bool new_want_determinism = system.GetMovie().IsMovieActive() ||
+                              NetPlay::IsNetPlayRunning() || s_force_determinism;
   if (new_want_determinism != s_wants_determinism || initial)
   {
     NOTICE_LOG_FMT(COMMON, "Want determinism <- {}", new_want_determinism ? "true" : "false");

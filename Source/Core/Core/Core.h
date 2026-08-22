@@ -145,6 +145,22 @@ bool IsGPUThread();
 
 bool WantsDeterminism();
 
+// Ask for determinism from outside Movie and NetPlay.
+//
+// Determinism is normally implied by "a movie is recording" or "Dolphin's own
+// netplay is running", and both of those are unreachable when Dolphin is the
+// libretro core: the frontend runs the session, so NetPlay::IsNetPlayRunning()
+// is false however many peers are actually watching. Without this the JIT keeps
+// its FMA paths and the deterministic GPU thread never turns on, so two
+// instances fed identical input drift apart -- which is exactly what a frontend
+// lockstep session cannot survive.
+//
+// Set it BEFORE booting: BootManager calls UpdateWantDeterminism(initial=true),
+// which is what makes it take effect, and changing it later clears the JIT
+// cache mid-game.
+void SetForceDeterminism(bool force);
+bool GetForceDeterminism();
+
 // SetState can be called from any thread.
 void SetState(Core::System& system, State state, bool report_state_change = true,
               bool override_achievement_restrictions = false);

@@ -330,6 +330,17 @@ bool retro_load_game(const struct retro_game_info* game)
   Config::SetBase(Config::MAIN_DSP_HLE,
                      Libretro::GetOption<bool>(audio::DSP_HLE, /*def=*/true));
 
+  // Determinism is normally implied by a movie recording or Dolphin's own
+  // netplay, and neither exists here: the FRONTEND runs the session, so
+  // NetPlay::IsNetPlayRunning() is false however many peers are watching.
+  // Without this the JIT keeps its FMA paths and the deterministic GPU thread
+  // never turns on, and two instances fed identical input drift apart.
+  //
+  // Set before booting. BootManager calls UpdateWantDeterminism(initial=true)
+  // further down, which is what applies it; setting it later would clear the
+  // JIT cache mid-game.
+  Core::SetForceDeterminism(Libretro::GetOption<bool>(core::DETERMINISM, /*def=*/false));
+
   // dual core (true) or single core (false)
   Config::SetBase(Config::MAIN_CPU_THREAD,
     Libretro::GetOption<bool>(core::MAIN_CPU_THREAD, /*def=*/true));

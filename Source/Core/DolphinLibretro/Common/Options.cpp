@@ -156,6 +156,20 @@ static struct retro_core_option_v2_definition option_defs[] = {
     "0.0"
   },
   {
+    Libretro::Options::core::DETERMINISM,
+    "Core > Deterministic Mode",
+    "Deterministic Mode",
+    "Reproduce the same result from the same input, for frontend lockstep netplay. Costs speed. Requires core RESTART.",
+    nullptr,
+    CATEGORY_CORE,
+    {
+      { "disabled", "Disabled" },
+      { "enabled",  "Enabled" },
+      { nullptr, nullptr }
+    },
+    "disabled"
+  },
+  {
     Libretro::Options::core::MAIN_CPU_THREAD,
     "Core > Dual Core Mode",
     "Dual Core Mode",
