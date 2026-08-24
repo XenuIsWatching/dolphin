@@ -1,0 +1,192 @@
+# Build the retroXR Dolphin core for Windows and Android and publish it as a
+# release, so retroXR's CoreDownloadManager can fetch it.
+#
+# The existing build-*-libretro.yml workflows compile on every push and keep
+# nothing. That makes them fine as checks and useless as a source of binaries,
+# which is why every release before this one was built by hand on a desktop.
+# This runs the SAME configure and build commands they do -- deliberately copied
+# rather than shared, so a change to a check cannot silently change what ships.
+#
+# The contract with the app is narrow and entirely in the asset names. RetroXR
+# reads CoreSources.SOURCES["dolphin"].assets and asks for exactly one filename
+# per platform; a miss is reported as a miss rather than falling back, so a
+# renamed asset here is a core that simply never downloads.
+#
+#   Windows  dolphin_libretro.dll.zip          containing dolphin_libretro.dll
+#   Android  dolphin_libretro_android.so.zip   containing dolphin_libretro_android.so
+#
+# One core file at the root of the zip, which is what the previous hand-built
+# assets contained and what the installer unpacks.
+#
+# The release must NOT be a prerelease: the download URL is the /releases/latest/
+# form so that shipping a build needs no app update, and GitHub's `latest` skips
+# prereleases. Anything else cut on this fork should be marked prerelease for the
+# same reason -- `latest` is per repository, not per product.
+name: retroXR core release
+
+on:
+  push:
+    tags:
+      - 'retroxr-dolphin-libretro-v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag or SHA to build'
+        required: true
+        default: 'retroxr'
+      tag:
+        description: 'Release tag to publish as (leave blank to build without publishing)'
+        required: false
+        default: ''
+
+env:
+  core_id: dolphin_libretro
+
+jobs:
+  windows:
+    name: Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - name: Install dependencies
+        run: choco install cmake ninja git
+
+      - uses: actions/checkout@v6
+        with:
+          path: ${{ env.core_id }}
+          submodules: recursive
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Configure (MSVC)
+        run: |
+          cd ${{ env.core_id }}
+          mkdir build && cd build
+          cmake .. -DLIBRETRO=ON -DCMAKE_BUILD_TYPE=Release -G "Visual Studio 18 2026" -A x64
+
+      - name: Build
+        run: cmake --build ${{ env.core_id }}/build --config Release --parallel
+
+      # Located rather than assumed: the output path moves with the generator and
+      # with Dolphin's own layout, and a wrong guess here fails as an empty zip
+      # that uploads perfectly well.
+      - name: Package
+        shell: pwsh
+        run: |
+          $hits = @(Get-ChildItem -Path "${{ env.core_id }}/build" -Recurse -Filter "dolphin_libretro.dll" -File)
+          if ($hits.Count -ne 1) {
+            Write-Host "expected exactly one dolphin_libretro.dll, found $($hits.Count):"
+            $hits | ForEach-Object { Write-Host "  $($_.FullName)" }
+            exit 1
+          }
+          New-Item -ItemType Directory -Path stage | Out-Null
+          Copy-Item $hits[0].FullName stage/dolphin_libretro.dll
+          Compress-Archive -Path stage/dolphin_libretro.dll -DestinationPath dolphin_libretro.dll.zip -Force
+          Write-Host "packaged $([math]::Round($hits[0].Length/1MB,1)) MB core"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dolphin_libretro.dll.zip
+          if-no-files-found: error
+
+  android:
+    name: Android arm64-v8a
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-25-jdk wget unzip cmake ninja-build
+          wget -q https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          unzip -q android-ndk-r29-linux.zip
+          echo "ANDROID_NDK_HOME=$PWD/android-ndk-r29" >> $GITHUB_ENV
+
+      - uses: actions/checkout@v6
+        with:
+          path: ${{ env.core_id }}
+          submodules: recursive
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Configure
+        run: |
+          cd ${{ env.core_id }}
+          cmake -B build/android-arm64-v8a \
+            -DLIBRETRO=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -G Ninja
+
+      - name: Build
+        run: |
+          cd ${{ env.core_id }}/build/android-arm64-v8a
+          ninja -j$(nproc)
+
+      # The core is renamed to the _android spelling on the way into the zip.
+      # CoreDownloadManager.core_lib_suffixes() accepts both on Android, but the
+      # canonical name is the one the asset advertises, and matching it keeps a
+      # downloaded core recognisable as the one that was asked for.
+      - name: Package
+        run: |
+          mapfile -t hits < <(find "${{ env.core_id }}/build/android-arm64-v8a" \
+            -name 'dolphin_libretro*.so' -type f)
+          if [ "${#hits[@]}" -ne 1 ]; then
+            echo "expected exactly one dolphin_libretro*.so, found ${#hits[@]}:"
+            printf '  %s\n' "${hits[@]}"
+            exit 1
+          fi
+          mkdir -p stage
+          cp "${hits[0]}" stage/dolphin_libretro_android.so
+          (cd stage && zip -q -X ../dolphin_libretro_android.so.zip dolphin_libretro_android.so)
+          ls -lh dolphin_libretro_android.so.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dolphin_libretro_android.so.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [windows, android]
+    # Only when there is a tag to publish as. A workflow_dispatch with a blank
+    # tag is a build check and stops here rather than cutting a release nobody
+    # asked for.
+    if: github.event_name == 'push' || github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          ls -lh dist
+          cat > notes.md <<EOF
+          Dolphin libretro core built for retroXR, from \`$GITHUB_SHA\`.
+
+          Windows x86_64 and Android arm64-v8a. The source for these binaries is
+          this tag, which is how the GPLv2+ obligation is met.
+
+          Over the stock buildbot build this adds the options retroXR needs:
+          Wiimote IR passthrough, per-slot GameCube memory cards, deterministic
+          mode, and the frontend link interface.
+          EOF
+          # Create if absent, then upload with --clobber, so re-running the
+          # workflow for a tag replaces the assets instead of failing.
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Dolphin (retroXR build) $TAG" \
+              --notes-file notes.md
+          fi
+          gh release upload "$TAG" \
+            dist/dolphin_libretro.dll.zip \
+            dist/dolphin_libretro_android.so.zip \
+            --repo "$GITHUB_REPOSITORY" --clobber
