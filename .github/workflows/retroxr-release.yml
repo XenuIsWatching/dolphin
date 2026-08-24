@@ -137,6 +137,37 @@ jobs:
           fi
           mkdir -p stage
           cp "${hits[0]}" stage/dolphin_libretro_android.so
+
+          # Strip, because CMake does not and nothing downstream will. Unstripped
+          # this core is 230 MB of which 215 MB is debug_info, and it is
+          # downloaded onto a headset at runtime and kept in internal storage.
+          # Stripped it is 15 MB. (ndk-build strips on install, which is why the
+          # Makefile-based cores never needed this and these two do.)
+          #
+          # --strip-unneeded and not --strip-all: the frontend finds this core by
+          # dlsym, so removing the dynamic symbol table would leave a core that
+          # downloads, installs, and cannot be loaded at all.
+          STRIP="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          NM="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          before=$(stat -c%s stage/dolphin_libretro_android.so)
+          "$STRIP" --strip-unneeded stage/dolphin_libretro_android.so
+          after=$(stat -c%s stage/dolphin_libretro_android.so)
+          echo "stripped: $before -> $after bytes"
+
+          # And prove the entry points survived it, rather than assuming. A core
+          # missing these is indistinguishable from a failed download to anyone
+          # looking at the app.
+          exports=$("$NM" --dynamic --defined-only stage/dolphin_libretro_android.so \
+            | grep -c ' retro_' || true)
+          echo "retro_* exports after stripping: $exports"
+          for sym in retro_api_version retro_init retro_load_game retro_run; do
+            if ! "$NM" --dynamic --defined-only stage/dolphin_libretro_android.so \
+                 | grep -q " $sym\$"; then
+              echo "FATAL: $sym is not exported after stripping"
+              exit 1
+            fi
+          done
+
           (cd stage && zip -q -X ../dolphin_libretro_android.so.zip dolphin_libretro_android.so)
           ls -lh dolphin_libretro_android.so.zip
 
