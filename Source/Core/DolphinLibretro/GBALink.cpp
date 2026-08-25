@@ -156,9 +156,26 @@ private:
   // Message kinds, matching the driver at the other end byte for byte. Packed by
   // hand rather than shipped as a struct: the two ends are separate programs and
   // a shared layout would be an assumption nobody remembers having made.
+  //
+  // THESE ARE POSITIONS IN mGBA'S ENUM, NOT NAMES, and that enum lives in
+  // another repository. It reads:
+  //
+  //     NL_MODE = 1, NL_XFER_START, NL_XFER_DATA, NL_LINES, NL_STATE_ACK,
+  //     NL_JOY_CMD, NL_JOY_REPLY
+  //
+  // so the GameCube's two are 6 and 7. They were 5 and 6 until mGBA's
+  // 0192b7b7f (2026-08-24) added NL_STATE_ACK in the MIDDLE of that list,
+  // renumbering everything after it and leaving these two stale. Nothing
+  // failed loudly: Dolphin went on sending a 5, mGBA read 5 as NL_STATE_ACK,
+  // dropped it as not-a-JOY-command and never replied. Measured, the console
+  // sent 2863 commands and received nothing across ninety seconds while the
+  // handheld sat on the BIOS screen -- and the probe still said PASS.
+  //
+  // If a new kind is ever needed, APPEND it. Inserting one silently breaks
+  // this file, and only this file, from a commit in a different repository.
   static constexpr size_t MSG_SIZE = 12;
-  static constexpr u8 NL_JOY_CMD = 5;
-  static constexpr u8 NL_JOY_REPLY = 6;
+  static constexpr u8 NL_JOY_CMD = 6;
+  static constexpr u8 NL_JOY_REPLY = 7;
 
   const retro_link_interface* m_link;
   retro_link_port_t *m_handle;
