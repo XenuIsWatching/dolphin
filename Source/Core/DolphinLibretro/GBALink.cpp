@@ -111,7 +111,8 @@ public:
     // reply is due at. The frontend converts between the two machines' clock
     // rates; neither end ever sees the other's units.
     m_position = ticks;
-    m_link->advance(m_handle, ticks, ticks + m_horizon, ticks);
+    u32 wake_flags = RETRO_LINK_WAKE_NONE;
+    m_link->advance(m_handle, ticks, ticks + m_horizon, ticks, &wake_flags);
   }
 
   void Send(const u8* data, size_t len, u64 ticks) override
