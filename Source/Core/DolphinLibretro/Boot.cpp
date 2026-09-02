@@ -21,6 +21,7 @@
 #include "Core/HW/DVD/DVDInterface.h"
 #include "Core/HW/EXI/EXI_Device.h"
 #include "Core/HW/HSP/HSP_Device.h"
+#include "Core/HW/SI/SI_DeviceGBA.h"
 #include "Core/HW/VideoInterface.h"
 #include "Core/HW/WiimoteReal/WiimoteReal.h"
 #include "Core/PowerPC/PowerPC.h"
@@ -783,6 +784,15 @@ void retro_unload_game(void)
 
     Core::Shutdown(system);
   }
+
+  // A GBA on a controller port starts the "GBA Connection Waiter" thread (the
+  // TCP listener for external handheld emulators), and only Core::Shutdown
+  // joins it. When the core is not reported running at unload the block above
+  // is skipped and that static std::thread is still joinable when the frontend
+  // closes the library, which is std::terminate in the library's destructors -
+  // a SIGABRT on powering off a GameCube with a GC-GBA cable seated. Idempotent,
+  // so unconditional.
+  SerialInterface::GBAConnectionWaiter_Shutdown();
 
   if (!g_context_status.IsDestroyed() && g_video_backend)
     g_video_backend->Shutdown();

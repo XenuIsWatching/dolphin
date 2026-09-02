@@ -19,6 +19,7 @@
 #include "Common/Version.h"
 #include "Core/ActionReplay.h"
 #include "Core/BootManager.h"
+#include "Core/HW/SI/SI_DeviceGBA.h"
 #include "Core/Config/GraphicsSettings.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/Config/SYSCONFSettings.h"
@@ -125,6 +126,8 @@ void retro_init(void)
 void retro_deinit(void)
 {
   Libretro::g_emuthread_launched = false;
+  // Backstop for retro_unload_game: no thread of ours may outlive the library.
+  SerialInterface::GBAConnectionWaiter_Shutdown();
 #ifdef PERF_TEST
   perf_cb.perf_log();
 #endif
